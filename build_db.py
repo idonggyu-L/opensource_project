@@ -82,10 +82,10 @@ def build_pdf_db(pdf_dir: str, output_dir: str = "faiss_indexes"):
 if __name__ == "__main__":
     # 필요할 때만 골라 실행
     csv_dir = "/home/hail/RAG/data"
-    pdf_dir = "/home/hail/RAG/data_"
+    pdf_dir = "/Users/idong-gyu/RAG_clean/data_"
 
     # 뉴스 DB 생성
-    build_news_db(csv_dir)
+    #build_news_db(csv_dir)
 
     # PDF DB 생성
     build_pdf_db(pdf_dir)

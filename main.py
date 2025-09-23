@@ -3,12 +3,13 @@ from retrieval_terms import explain_terms
 import os
 from fastapi import FastAPI
 from pydantic import BaseModel
-from fastapi import FastAPI
-from pydantic import BaseModel
-from retrieval_news import search_news, db_news
-from retrieval_terms import explain_terms
-from langchain.memory import ConversationBufferMemory
 from fastapi.middleware.cors import CORSMiddleware
+
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
+from langchain_openai import ChatOpenAI
+import json
+
 
 
 app = FastAPI()
@@ -24,35 +25,56 @@ app.add_middleware(
 class QueryRequest(BaseModel):
     user_input: str
 
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+# 용어 추출 체인
+keyword_prompt = PromptTemplate(
+    template="""
+    아래 뉴스 요약에서 경제/금융 관련 핵심 용어 3~5개만 뽑아서
+    반드시 JSON 배열 형식으로만 출력해라.
+    예시: ["기준금리","FOMC","금리"]
+
+    뉴스 요약:
+    {context}
+    """,
+    input_variables=["context"]
+)
+keyword_chain = LLMChain(llm=llm, prompt=keyword_prompt, verbose=True)
+
+def extract_terms_with_llm(context: str) -> list[str]:
+    raw_output = keyword_chain.run(context=context)
+    try:
+        terms = json.loads(raw_output)
+        if isinstance(terms, list):
+            return [t.strip() for t in terms]
+    except Exception as e:
+        print("⚠️ JSON parse 실패:", e, "| raw_output:", raw_output)
+    return []
+
 def route_query(user_input: str):
-    if "용어" in user_input or "자세히 설명" in user_input:
-        return {
-            "type": "terms",
-            "terms_answer": explain_terms(user_input)
-        }
-    else:
-        # 뉴스 검색
-        docs_and_scores = db_news.similarity_search_with_score(user_input, k=1)
-        if not docs_and_scores:
-            return {"type": "news", "news_answer": "관련 뉴스를 찾지 못했습니다."}
+    # 1) 뉴스 검색 + 요약
+    news_result = search_news(user_input, k=5)
+    news_summary = news_result["summary"]
+    news_links = news_result["links"]
 
-        best_doc, _ = docs_and_scores[0]
-        news_context = best_doc.page_content
+    # 2) 뉴스 요약 기반 용어 추출
+    keywords = extract_terms_with_llm(news_summary)
 
-        # 뉴스 요약
-        news_answer = search_news(user_input)
+    # 3) 용어 설명 (사전 DB 참고)
+    terms_answer = {}
+    for term in keywords:
+        explanation = explain_terms(term)
+        if explanation and "찾지 못했습니다" not in explanation:
+            terms_answer[term] = explanation
 
-        # 뉴스 본문(context) 기반 용어 설명
-        terms_answer = explain_terms(news_context)
-
-        return {
-            "type": "news",
-            "news_answer": news_answer,
-            "terms_answer": terms_answer
-        }
+    # 4) 최종 응답 구조
+    response = {
+        "뉴스 요약": news_summary,
+        "관련 용어": terms_answer,
+        "출처": news_links
+    }
+    return response
 
 @app.post("/query")
 def query_api(request: QueryRequest):
     return route_query(request.user_input)
-
-
