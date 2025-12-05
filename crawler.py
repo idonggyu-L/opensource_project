@@ -11,7 +11,7 @@ from selenium.common.exceptions import (
 from bs4 import BeautifulSoup
 
 
-def run_crawler(max_pages: int = 10, output_dir: str = "/home/hail/RAG/data/"):
+def run_crawler(max_pages: int = 20, output_dir: str = "/home/hail/Desktop/RAG_clean/data/"):
     """
     Naver Economy News Crawler (stable version + all categories)
     - max_pages: number of times to click 'more' button
@@ -49,66 +49,113 @@ def run_crawler(max_pages: int = 10, output_dir: str = "/home/hail/RAG/data/"):
 
         articles = []
 
+
+        # for page in range(max_pages):
+        #     print(f"[DEBUG] Page={page + 1}")
+        #
+        #     WebDriverWait(driver, 10).until(
+        #         EC.presence_of_all_elements_located((By.CSS_SELECTOR, "a.sa_text_title"))
+        #     )
+        #     if page==0:
+        #         titles= driver.find_elements(By.CSS_SELECTOR, "a.sa_text_title")
+        #
+        #     else:
+        #         _new = driver.find_elements(By.CSS_SELECTOR, "a.sa_text_title")
+        #         titles = list(set(_new+titles))
+        #
+        #     for idx, t in enumerate(titles):
+        #         try:
+        #             title = t.text.strip()
+        #             link = t.get_attribute("href")
+        #
+        #             driver.execute_script("window.open(arguments[0]);", link)
+        #             driver.switch_to.window(driver.window_handles[-1])
+        #             time.sleep(1)
+        #
+        #             soup = BeautifulSoup(driver.page_source, "html.parser")
+        #             content_tag = soup.select_one("article#dic_area")
+        #             content = content_tag.get_text(" ", strip=True) if content_tag else ""
+        #
+        #             articles.append({"title": title, "link": link, "content": content})
+        #
+        #             driver.close()
+        #             driver.switch_to.window(driver.window_handles[0])
+        #
+        #         except Exception as e:
+        #             print(f"[ERROR] Content parsing failed: {e}")
+        #             continue
+        #
+        #     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        #     time.sleep(2)
+        #
+        #
+        #     more_btn = driver.find_element(
+        #         By.CSS_SELECTOR, "#newsct > div.section_latest > div > div.section_more > a"
+        #     )
+        #     driver.execute_script("arguments[0].scrollIntoView(true);", more_btn)
+        #     time.sleep(2)
+        #     driver.execute_script("arguments[0].click();", more_btn)
+        #     time.sleep(2)
+        #     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+
+        # Prevent duplicate articles using a set of URLs
+        seen_links = set()
+
         for page in range(max_pages):
-            try:
-                # Wait until article titles are loaded in DOM
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, "a.sa_text_title"))
-                )
-                titles = driver.find_elements(By.CSS_SELECTOR, "a.sa_text_title")
-            except TimeoutException:
-                print("Timeout: Failed to load article titles")
-                break
+            print(f"[DEBUG] PAGE {page + 1}")
 
-            # Process only new articles (skip already collected)
-            for idx in range(len(articles), len(titles)):
-                retry = 0
-                while retry < 3:
-                    try:
-                        # Re-fetch elements every loop to avoid stale reference
-                        titles = driver.find_elements(By.CSS_SELECTOR, "a.sa_text_title")
-                        t = titles[idx]
+            # Wait until article titles are present
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "a.sa_text_title"))
+            )
 
-                        title = t.text.strip()
-                        link = t.get_attribute("href")
+            # Collect the current page titles
+            articles_el = driver.find_elements(By.CSS_SELECTOR, "a.sa_text_title")
 
-                        # Open article in a new tab
-                        driver.execute_script("window.open(arguments[0]);", link)
-                        driver.switch_to.window(driver.window_handles[-1])
-                        time.sleep(1)
+            # Parse only new articles (avoid duplicates using href)
+            for t in articles_el:
+                link = t.get_attribute("href")
 
-                        # Parse article content
-                        soup = BeautifulSoup(driver.page_source, "html.parser")
-                        content_tag = soup.select_one("article#dic_area")
-                        content = content_tag.get_text(" ", strip=True) if content_tag else ""
+                # Skip duplicated articles
+                if link in seen_links:
+                    continue
+                seen_links.add(link)
 
-                        articles.append({
-                            "title": title,
-                            "link": link,
-                            "content": content
-                        })
+                title = t.text.strip()
 
-                        driver.close()
-                        driver.switch_to.window(driver.window_handles[0])
-                        break
-                    except StaleElementReferenceException:
-                        retry += 1
-                        time.sleep(0.5)
-                        if retry == 3:
-                            print("Skip one article due to stale element")
+                # Open and parse the article
+                driver.execute_script("window.open(arguments[0]);", link)
+                driver.switch_to.window(driver.window_handles[-1])
+                time.sleep(1)
 
-            # Try to click 'more' button for next page
+                soup = BeautifulSoup(driver.page_source, "html.parser")
+                content_tag = soup.select_one("article#dic_area")
+                content = content_tag.get_text(" ", strip=True) if content_tag else ""
+
+                driver.close()
+                driver.switch_to.window(driver.window_handles[0])
+
+                articles.append({"title": title, "link": link, "content": content})
+
+            # Scroll down to expose 'More' button (required for AJAX loading)
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+
+            # Try to click the 'More' button to load next page
             try:
                 more_btn = driver.find_element(
-                    By.CSS_SELECTOR, "#newsct > div.section_latest > div > div.section_more > a"
+                    By.CSS_SELECTOR,
+                    "#newsct > div.section_latest > div > div.section_more > a"
                 )
+                driver.execute_script("arguments[0].scrollIntoView(true);", more_btn)
+                time.sleep(0.5)
                 driver.execute_script("arguments[0].click();", more_btn)
                 time.sleep(2)
+
             except Exception:
-                print(f"No more pages in {cat}")
+                print("No more pages available")
                 break
 
-        # Save results as CSV
         df = pd.DataFrame(articles)
         output_path = f"{output_dir}/naver_news_{cat}.csv"
         df.to_csv(output_path, index=False, encoding="utf-8-sig")

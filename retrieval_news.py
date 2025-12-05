@@ -4,7 +4,13 @@ from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from langchain.memory import ConversationBufferMemory
 import os
+import locale
 
+##API key##
+os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ["LC_ALL"] = "C.UTF-8"
+os.environ["LANG"] = "C.UTF-8"
+locale.setlocale(locale.LC_ALL, "C.UTF-8")
 
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
@@ -26,7 +32,8 @@ news_prompt = PromptTemplate(
     - 요약은 반드시 최대 5줄 이하로 제한할 것.
     - 기사별 요약이 아니라 전체 내용을 통합해서 핵심만 정리할 것.
     - 불필요한 반복, 중복 문장은 절대 포함하지 말 것.
-    - 맥락이 비어 있으면 "관련 뉴스를 찾지 못했습니다."라고 답변해라.
+    - 맥락이 비어 있으면 "관련 뉴스를 찾지 못했습니다."라고 답변할 것.
+    - 광고성 문구나 홍보 문구는 절대 포함하지 말 것.
     """,
     input_variables=["input_text"]
 )
@@ -43,8 +50,7 @@ news_chain = LLMChain(
     verbose=True
 )
 
-def search_news(query: str, k: int = 1) -> dict:
-    """뉴스 검색 후, 통합 요약 + 링크 반환"""
+def search_news(query: str, k: int = 3) -> dict:
     docs_and_scores = db_news.similarity_search_with_score(query, k=k)
     if not docs_and_scores:
         return {"summary": "관련 뉴스를 찾지 못했습니다.", "links": []}
@@ -56,16 +62,12 @@ def search_news(query: str, k: int = 1) -> dict:
         combined_context += doc.page_content + "\n\n"
         if "url" in doc.metadata:
             links.append(doc.metadata["url"])
-        elif "source" in doc.metadata:
-            links.append(doc.metadata["source"])
+        elif "link" in doc.metadata:
+            links.append(doc.metadata["link"])
 
-    # 길이 제한 (예: 3000자)
     combined_context = combined_context[:3000]
 
-    # 요약 실행
     summary = news_chain.run(input_text=f"질문: {query}\nContext: {combined_context}")
-
-    # ✅ 5줄 이하 강제
     summary_lines = [line.strip() for line in summary.split("\n") if line.strip()]
     summary = "\n".join(summary_lines[:5])
 

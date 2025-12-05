@@ -3,9 +3,10 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import CSVLoader, PyPDFLoader
 from langchain.text_splitter import TokenTextSplitter
+from langchain.docstore.document import Document
+import pandas as pd
 
-
-
+##API key##
 
 def safe_faiss_from_documents(docs, embeddings, batch_size=1000):
     """Create FAISS index safely by splitting into smaller batches."""
@@ -20,8 +21,7 @@ def safe_faiss_from_documents(docs, embeddings, batch_size=1000):
     return db
 
 
-def build_news_db(csv_dir: str, output_dir: str = "faiss_indexes"):
-    """뉴스 기사 DB 생성"""
+def build_news_db_(csv_dir: str, output_dir: str = "faiss_indexes"):
     os.makedirs(output_dir, exist_ok=True)
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
@@ -38,10 +38,42 @@ def build_news_db(csv_dir: str, output_dir: str = "faiss_indexes"):
 
     db_news = safe_faiss_from_documents(all_news_docs, embeddings, batch_size=500)
     db_news.save_local(os.path.join(output_dir, "news_combined"))
-    print(f"✅ Saved News DB: {len(all_news_docs)} chunks")
+    print(f"Saved News DB: {len(all_news_docs)} chunks")
 
     return db_news
 
+def build_news_db(csv_dir: str, output_dir: str = "faiss_indexes"):
+    os.makedirs(output_dir, exist_ok=True)
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+    all_news_docs = []
+
+    for file in os.listdir(csv_dir):
+        if file.endswith(".csv"):
+            df = pd.read_csv(os.path.join(csv_dir, file))
+            df["content"] = df["content"].fillna("내용없음")  
+            df["title"]   = df["title"].fillna("제목없음")
+            df["link"]    = df["link"].fillna("링크없음")   
+
+            for _, row in df.iterrows():
+                all_news_docs.append(
+                    Document(
+                        page_content=row["content"],  # 기사 본문
+                        metadata={
+                            "title": row["title"],
+                            "link": row["link"],
+                            "source": file  
+                        }
+                    )
+                )
+
+    splitter = TokenTextSplitter(chunk_size=1200, chunk_overlap=100)
+    all_news_docs = splitter.split_documents(all_news_docs)
+    db_news = safe_faiss_from_documents(all_news_docs, embeddings, batch_size=500)
+    db_news.save_local(os.path.join(output_dir, "news_combined"))
+
+    print(f"Saved News DB: {len(all_news_docs)} chunks")
+    return db_news
 
 def build_pdf_db(pdf_dir: str, output_dir: str = "faiss_indexes"):
     """경제 용어/교육자료 PDF DB 생성"""
@@ -80,14 +112,14 @@ def build_pdf_db(pdf_dir: str, output_dir: str = "faiss_indexes"):
 
 
 if __name__ == "__main__":
-    # 필요할 때만 골라 실행
-    csv_dir = "/home/hail/RAG/data"
-    pdf_dir = "/Users/idong-gyu/RAG_clean/data_"
+
+    csv_dir = "/home/hail/Desktop/RAG_clean/data/"
+    #pdf_dir = "/Users/idong-gyu/RAG_clean/data_"
 
     # 뉴스 DB 생성
-    #build_news_db(csv_dir)
+    build_news_db(csv_dir)
 
     # PDF DB 생성
-    build_pdf_db(pdf_dir)
+    #build_pdf_db(pdf_dir)
 
 

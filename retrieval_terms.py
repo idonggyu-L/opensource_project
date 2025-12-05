@@ -4,8 +4,8 @@ from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from langchain.memory import ConversationBufferMemory
 import os
-
-
+##OpenAI API key###
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 db_pdf = FAISS.load_local(
@@ -40,7 +40,7 @@ terms_chain = LLMChain(
     verbose=True
 )
 
-def explain_terms(terms: str, k: int = 15) -> str:
+def explain_terms(terms: str, k: int = 20) -> str:
     """경제 용어 설명"""
     docs_and_scores = db_pdf.similarity_search_with_score(terms, k=k)
     if not docs_and_scores:
@@ -49,5 +49,4 @@ def explain_terms(terms: str, k: int = 15) -> str:
     best_doc, _ = docs_and_scores[0]
     context = best_doc.page_content
 
-    # question + context 하나로 합쳐서 전달
     return terms_chain.run(input_text=f"질문: {terms}\nContext: {context}")
