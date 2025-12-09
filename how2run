@@ -1,0 +1,10 @@
+1. 1. retrieval_news, retrieval_terms, main의 맨 위에 chatgpt API 환경 변수 설정
+2. 패키지 설치 (python package랑 Node.js랑 React까지)
+3. vscode에서 터미널을 연다 
+4. uvicorn main:app --reload --app-dir /Users/코드 폴더 경로
+
+ex) uvicorn main:app --reload --app-dir /Users/idong-gyu/RAG_clean
+
+1. 새로운 터미널을 열고
+2. cd frontend
+3. npm start
