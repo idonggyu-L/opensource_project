@@ -1,0 +1,96 @@
+
+【 Developer Guide : Economic News RAG & RL Prediction Platform 】
+0. openAI token을 구매하여 환경변수에 설정하여야 한다.
+1. System Overview
+   본 플랫폼은 경제 뉴스 분석(RAG)과 강화학습 기반 주가 예측(RL)을 하나의 FastAPI 서버에서 통합적으로 수행한다. 전체 시스템은 React Frontend, FastAPI Backend, 뉴스 RAG 파이프라인, 경제 용어 RAG 파이프라인, PPO 강화학습 모델, FAISS 벡터 데이터베이스로 구성된다. Backend는 모든 모델과 DB를 로드하여 요청당 inference를 수행하며, Frontend는 결과를 사용자에게 시각적으로 제공한다.
+
+2. Frontend (React)
+   Frontend는 사용자 입력을 받아 Backend API를 호출하는 SPA(Single Page Application)이다.
+   사용자가 검색어를 입력하면 fetch("[http://127.0.0.1:8000/query")로](http://127.0.0.1:8000/query%22%29로) POST 요청을 보내며, JSON.stringify({ user_input: input }) 형태로 데이터를 전달한다. Backend 응답에는 뉴스 요약, 관련 용어, 용어 설명, 기사 링크가 포함되며, 이를 state에 저장하고 화면에 출력한다. 주가 예측의 경우 fetch("[http://127.0.0.1:8000/predict_stock")로](http://127.0.0.1:8000/predict_stock%22%29로) ticker_code를 전달한다. 응답에는 종목명과 RL 행동 기반 매수/매도/보유 의견이 포함된다. React는 입력창, 버튼, 결과 카드 UI를 구성하여 전체 통합 기능을 제공한다.
+
+3. Backend (FastAPI)
+
+3.1 FastAPI 서버 구조
+main.py는 FastAPI 인스턴스를 생성하고 CORSMiddleware를 적용하여 모든 출처의 요청을 허용한다. /query와 /predict_stock 두 개의 핵심 엔드포인트를 제공한다.
+
+3.2 POST /query
+route_query 함수가 핵심 로직을 처리한다.
+1 단계: search_news(user_input)을 호출하여 뉴스 RAG 검색을 수행한다.
+2 단계: 검색 결과 요약을 extract_terms_with_llm 함수에 전달하여 LLM 기반 핵심 용어를 추출한다. 이 함수는 PromptTemplate을 기반으로 LLMChain.run()을 호출해 JSON 배열 형태의 용어를 생성하며, json.loads로 파싱한다.
+3 단계: 각 용어에 대해 explain_terms(term)을 실행하여 경제 용어 PDF DB에서 검색한 후 LLM으로 2~3문장 설명을 생성한다.
+4 단계: 최종적으로 뉴스 요약, 관련 용어와 설명, 출처 링크를 JSON으로 묶어 반환한다.
+
+3.3 POST /predict_stock
+predict_stock_action 함수가 주가 예측을 처리한다.
+
+* 입력받은 종목 코드 뒤에 ".KS"를 붙여 한국 주식 종목 형태로 변환한다.
+* yfinance.download로 최근 60일 데이터를 가져오고, 환경 생성에 필요한 길이만큼 tail로 자른 후 CSV로 저장한다.
+* StocksEnv(eval_path)로 강화학습 환경을 로드하고 PPO 모델로 행동을 순차적으로 예측한다.
+* 마지막 스텝의 action 값을 long/short/hold 의견으로 해석하여 JSON으로 반환한다.
+
+4. RAG Pipeline
+
+4.1 뉴스 RAG (retrieval_news.py)
+뉴스 검색은 다음 코드를 통해 수행된다.
+FAISS.load_local("faiss_indexes/news_combined", embeddings)로 검색 DB 로드 후 similarity_search_with_score(query, k)를 실행한다.
+검색된 문서는 combined_context에 연결되며 길이는 3000자로 제한된다.
+LLMChain을 이용해 PromptTemplate에 따라 5줄 이하로 요약문을 생성한다.
+맥락이 비어 있을 경우 "관련 뉴스를 찾지 못했습니다."가 반환된다.
+링크 정보는 doc.metadata["link"] 또는 ["url"]에서 자동 추출된다.
+
+4.2 핵심 용어 추출 (main.py)
+extract_terms_with_llm(context) 함수는 LLMChain을 사용해 뉴스 요약에서 경제 용어를 JSON 배열로 생성한다.
+PromptTemplate은 반드시 JSON 배열만 출력하도록 강제하여 LLM 오류를 최소화한다.
+
+4.3 경제 용어 RAG (retrieval_terms.py)
+FAISS.load_local("faiss_indexes/pdf_combined")로 PDF 기반 벡터 DB를 로드한다. explain_terms 함수는 similarity_search_with_score(term, k)로 관련 단락을 검색하고 terms_chain.run()으로 2~3문장 설명을 생성한다. 관련 문단이 없으면 "관련 용어 설명을 찾지 못했습니다."를 반환한다.
+
+5. Vector Database (FAISS)
+
+5.1 Embedding
+text-embedding-3-small 모델로 임베딩을 생성하며, 문서 chunk 생성은 TokenTextSplitter(chunk_size=1200, chunk_overlap=100)을 사용한다.
+
+5.2 안전한 대규모 인덱스 생성
+build_db.py는 safe_faiss_from_documents 함수를 통해 대량 문서를 batch_size 단위로 나누어 FAISS 인덱스를 생성한다. 생성된 인덱스는 db_news.save_local("faiss_indexes/news_combined") 등으로 저장한다.
+
+6. Reinforcement Learning Module (PPO)
+
+6.1 StocksEnv 내부 구조
+Observation: window_size × feature_dim 시계열 데이터 + 현재 포지션 + 마지막 거래 이후 경과 비율
+Features: 정규화된 종가(norm_prices), 차분(diff), 거래량, EMA, RSI, ATR, OBV
+Action: continuous Box([-1, 1]) 형태
+Reward: tanh(beta * z) 기반이며 z는 (position * log return / rolling volatility)로 계산된다. 거래 비용(trade_cost) 및 보유 비용(hold_cost)을 반영한다.
+Step: 환경 tick 증가, reward 계산, equity 업데이트, obs 생성 이후 terminated 여부 판단
+Reset: 랜덤 시작 지점 생성, window padding 수행
+
+6.2 PPO 모델 로딩
+ppo.py는 m = PPO.load('ppo_stock_.zip') 형태로 사전 학습 모델을 로드한다. main.py는 이를 import하여 FastAPI 요청마다 inference를 수행한다.
+
+6.3 주가 예측 알고리즘
+predict_stock_action에서 while 루프를 돌며 PPO 모델의 action을 지속적으로 예측하고, 마지막 action을 최종 예측 신호로 사용한다. action > 0이면 매수, action < 0이면 매도, 0이면 중립으로 해석한다.
+
+7. Data Preprocessing
+
+7.1 Selenium 크롤러 (crawler.py)
+run_crawler는 다음 방식으로 동작한다.
+
+1. webdriver.Chrome()으로 브라우저 실행
+2. 네이버 뉴스 접속 → 경제 섹션 버튼 클릭
+3. finance, securities, industry 등 7개 카테고리를 순서대로 선택
+4. 각 카테고리에서 a.sa_text_title CSS 선택자를 사용하여 기사 제목과 링크를 추출
+5. 링크를 새 탭으로 열고 BeautifulSoup(article#dic_area)을 이용해 본문 파싱
+6. seen_links 집합으로 중복 기사 방지
+7. "더보기" 버튼(#newsct > div.section_latest ... a)을 클릭해 다음 페이지로 이동
+8. 수집된 기사(title, link, content)를 pandas DataFrame으로 저장 후 CSV로 기록
+   CSS 선택자 기반의 크롤링으로 안정적 기사 구조 파싱이 가능하며, 카테고리별로 독립된 CSV 데이터가 생성된다.
+
+7.2 벡터 DB 생성 (build_db.py)
+CSV 파일을 Document(page_content, metadata) 형태로 변환하고 TokenTextSplitter를 통해 chunk로 나누어 embeddings 생성 후 FAISS 인덱스를 구축한다.
+
+8. End-to-End System Flow Summary
+9. 사용자가 Frontend에서 뉴스 검색어나 종목 코드를 입력한다.
+10. Frontend는 FastAPI /query 또는 /predict_stock를 호출한다.
+11. /query는 뉴스 요약 생성 → 용어 추출 → 경제 용어 설명을 순차적으로 수행한다.
+12. /predict_stock은 시계열 데이터를 기반으로 PPO 모델로 행동을 inference한다.
+13. Backend는 RAG 결과 + RL 예측을 JSON으로 반환한다.
+14. Frontend는 요약, 용어 설명, 기사 링크, 매수/매도 예측 등을 UI로 통합하여 사용자에게 반환한다.
